@@ -45,8 +45,12 @@ export default function SummaryMetricsRow({ metrics }: SummaryMetricsRowProps) {
           </div>
         </div>
         <div>
-          <div className="metric-card-value">{metrics.extractionConfidence}%</div>
-          <div className="metric-card-status good">Status: {metrics.confidenceStatus}</div>
+          <div className="metric-card-value">
+            {metrics.extractionConfidence > 0 ? `${metrics.extractionConfidence}%` : 'Pending'}
+          </div>
+          <div className={`metric-card-status ${metrics.extractionConfidence > 0 ? 'good' : 'neutral'}`}>
+            Status: {metrics.confidenceStatus}
+          </div>
         </div>
       </div>
 

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { FileText, Fingerprint, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { FileText, Fingerprint, ArrowRight, CheckCircle2, AlertOctagon, RotateCcw } from 'lucide-react';
 import Sidebar from '@/components/layout/Sidebar';
 import Topbar from '@/components/layout/Topbar';
 import ProgressBar from '@/components/processing/ProgressBar';
@@ -12,10 +12,6 @@ import AiInsightCard from '@/components/processing/AiInsightCard';
 import ProcessingActivityLog from '@/components/processing/ProcessingActivityLog';
 import ProcessingErrorState from '@/components/processing/ProcessingErrorState';
 
-import {
-  getInitialProcessingState,
-  startMockProcessing,
-} from '@/services/mockProcessingService';
 import { documentService } from '@/services/documentService';
 import type { ProcessingState } from '@/types';
 
@@ -30,62 +26,69 @@ export default function ProcessingPage() {
   const rawId = params?.documentId;
   const documentId = Array.isArray(rawId) ? rawId[0] : (rawId as string) || '';
 
-  // Retrieve cached filename if available from upload step
-  const meta = documentService.getDocumentMeta(documentId);
-  const initialFileName = meta?.fileName || 'Land-Record-Document.pdf';
-
-  const [state, setState] = useState<ProcessingState>(() =>
-    getInitialProcessingState(documentId, initialFileName)
-  );
-
+  const [state, setState] = useState<ProcessingState | null>(null);
+  const [loading, setLoading] = useState(true);
   const [isNavigating, setIsNavigating] = useState(false);
-  const cancelProcessingRef = useRef<(() => void) | null>(null);
 
-  const handleComplete = useCallback(
-    (completedDocId: string) => {
-      // Auto-navigate to /analysis/:documentId after a short 1.4s delay so user sees completion
-      setTimeout(() => {
-        setIsNavigating(true);
-        router.push(`/analysis/${encodeURIComponent(completedDocId)}`);
-      }, 1400);
-    },
-    [router]
-  );
-
-  const startPipeline = useCallback(() => {
+  const fetchRealStatus = useCallback(async () => {
     if (!documentId) return;
 
-    // Clean up previous run if any
-    if (cancelProcessingRef.current) {
-      cancelProcessingRef.current();
+    try {
+      setLoading(true);
+      const res = await documentService.getProcessingStatus(documentId);
+      setState(res);
+      setLoading(false);
+
+      // If document is completed and not rejected, schedule transition to /analysis
+      if (res.status === 'completed' && !res.error) {
+        const timer = setTimeout(() => {
+          setIsNavigating(true);
+          router.push(`/analysis/${encodeURIComponent(documentId)}`);
+        }, 2200);
+        return () => clearTimeout(timer);
+      }
+    } catch (err: any) {
+      console.error('Failed to get real processing status:', err);
+      setLoading(false);
     }
-
-    const cancel = startMockProcessing(
-      documentId,
-      initialFileName,
-      (updatedState) => setState(updatedState),
-      handleComplete
-    );
-
-    cancelProcessingRef.current = cancel;
-  }, [documentId, initialFileName, handleComplete]);
+  }, [documentId, router]);
 
   useEffect(() => {
-    startPipeline();
-    return () => {
-      if (cancelProcessingRef.current) {
-        cancelProcessingRef.current();
-      }
-    };
-  }, [startPipeline]);
+    fetchRealStatus();
+  }, [fetchRealStatus]);
 
-  const handleRetry = () => {
-    setState(getInitialProcessingState(documentId, initialFileName));
-    startPipeline();
-  };
+  if (loading || !state) {
+    return (
+      <div style={{ display: 'flex', minHeight: '100vh' }}>
+        <Sidebar activePage="upload" />
+        <div className="main-content">
+          <Topbar
+            breadcrumbs={[
+              { label: 'BhoomiVerify AI', href: '/' },
+              { label: 'Upload', href: '/upload' },
+              { label: 'AI Processing' },
+            ]}
+          />
+          <main className="processing-page bg-grid" style={{ textAlign: 'center', padding: '6rem 2rem' }}>
+            <div className="glass-card" style={{ padding: '3rem', maxWidth: '500px', margin: '0 auto' }}>
+              <div className="animate-spin-slow" style={{ width: '48px', height: '48px', margin: '0 auto 1.5rem', color: 'var(--color-primary-light)' }}>
+                <Fingerprint size={48} />
+              </div>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>
+                Auditing Document Quality...
+              </h2>
+              <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.85rem' }}>
+                Executing OpenCV quality analyzers and adaptive enhancements for: {documentId}
+              </p>
+            </div>
+          </main>
+        </div>
+      </div>
+    );
+  }
 
-  const isCompleted = state.status === 'completed';
-  const isError = state.status === 'error';
+  const isCompleted = state.status === 'completed' && !state.error;
+  const isError = state.status === 'error' || Boolean(state.error);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -121,110 +124,131 @@ export default function ProcessingPage() {
                     : 'status-badge-processing'
                 }`}
               >
-                <span className={`badge-dot ${!isCompleted && !isError ? 'pulse' : ''}`} />
-                {isCompleted ? 'ANALYSIS COMPLETE' : isError ? 'FAILED' : 'PROCESSING'}
+                {isCompleted ? (
+                  <>
+                    <CheckCircle2 size={16} />
+                    <span>QUALITY VERIFIED & ENHANCED</span>
+                  </>
+                ) : isError ? (
+                  <>
+                    <AlertOctagon size={16} />
+                    <span>DOCUMENT REJECTED</span>
+                  </>
+                ) : (
+                  <>
+                    <div className="pulse-dot" />
+                    <span>ANALYZING QUALITY</span>
+                  </>
+                )}
               </div>
             </div>
 
-            {/* Document Metadata Banner (Dynamic Name, ID, Status) */}
-            <div className="document-meta-banner">
-              <div className="meta-item">
-                <div className="meta-icon-box doc">
-                  <FileText size={20} />
-                </div>
-                <div>
-                  <div className="meta-label">Document Name</div>
-                  <div className="meta-value" title={state.fileName}>
-                    {state.fileName}
-                  </div>
-                </div>
+            {/* Document Info Bar */}
+            <div className="doc-meta-card glass-card">
+              <div className="doc-meta-item">
+                <FileText size={16} className="doc-meta-icon" />
+                <span className="doc-meta-label">Document:</span>
+                <span className="doc-meta-value">{state.fileName}</span>
               </div>
-
-              <div className="meta-item">
-                <div className="meta-icon-box id">
-                  <Fingerprint size={20} />
-                </div>
-                <div>
-                  <div className="meta-label">Document ID</div>
-                  <div className="meta-value mono">{state.documentId}</div>
-                </div>
-              </div>
-
-              <div className="meta-item">
-                <div>
-                  <div className="meta-label">Current Pipeline Stage</div>
-                  <div className="meta-value" style={{ fontSize: '0.9rem', color: '#93c5fd' }}>
-                    {isCompleted
-                      ? 'Analysis Ready'
-                      : `${state.currentStageId}. ${
-                          state.stages.find((s) => s.id === state.currentStageId)?.name || 'Processing'
-                        }`}
-                  </div>
-                </div>
+              <div className="doc-meta-divider" />
+              <div className="doc-meta-item">
+                <Fingerprint size={16} className="doc-meta-icon" />
+                <span className="doc-meta-label">Document ID:</span>
+                <span className="doc-meta-value mono">{state.documentId}</span>
               </div>
             </div>
           </div>
 
-          {/* Error View if triggered */}
-          {isError && <ProcessingErrorState error={state.error} onRetry={handleRetry} />}
-
-          {/* Main 2-Column Processing Grid */}
-          {!isError && (
-            <div className="processing-grid">
-              {/* Left Column: Progress & Pipeline Stages */}
-              <div className="pipeline-column">
-                <ProgressBar
-                  progress={state.progress}
-                  message={state.message}
-                  isCompleted={isCompleted}
-                />
-
-                <PipelineStages
-                  stages={state.stages}
-                  currentStageId={state.currentStageId}
-                />
-
-                {/* Completion notification banner */}
-                {isCompleted && (
-                  <div className="completion-banner">
-                    <div className="completion-left">
-                      <div className="completion-icon">
-                        <CheckCircle2 size={20} />
-                      </div>
-                      <div>
-                        <div className="completion-title">AI Processing Completed</div>
-                        <div className="completion-sub">
-                          {isNavigating
-                            ? 'Redirecting to Document Intelligence...'
-                            : 'All 9 stages verified. Preparing analysis report...'}
-                        </div>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={() =>
-                        router.push(`/analysis/${encodeURIComponent(state.documentId)}`)
-                      }
-                    >
-                      <span>View Analysis</span>
-                      <ArrowRight size={16} />
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Right Column: Quality Scan Preview, AI Insight & Activity */}
-              <div className="insight-column">
-                <QualityScanCard scan={state.qualityScan} />
-
-                <AiInsightCard insight={state.aiInsight} />
-
-                <ProcessingActivityLog activities={state.activities} />
+          {/* If document was rejected due to severe low quality */}
+          {isError && (
+            <div
+              className="glass-card"
+              style={{
+                padding: '2rem',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                background: 'rgba(239, 68, 68, 0.05)',
+                marginBottom: '1.5rem',
+                borderRadius: 'var(--radius-lg)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+                <div
+                  style={{
+                    width: '42px',
+                    height: '42px',
+                    borderRadius: '50%',
+                    background: 'rgba(239, 68, 68, 0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#ef4444',
+                    flexShrink: 0,
+                  }}
+                >
+                  <AlertOctagon size={24} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 600, color: '#f87171', marginBottom: '0.35rem' }}>
+                    Document Rejected: Severe Quality Degradation
+                  </h3>
+                  <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.88rem', lineHeight: '1.5', marginBottom: '1rem' }}>
+                    {state.error || 'The uploaded file does not meet the minimum readability threshold required for reliable OCR extraction. Laplacian blur variance or physical paper degradation is too severe.'}
+                  </p>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => router.push('/upload')}
+                    style={{ background: '#ef4444', borderColor: '#ef4444' }}
+                  >
+                    <RotateCcw size={16} />
+                    <span>Upload Clearer Document</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
+
+          {/* Progress Section */}
+          <ProgressBar progress={state.progress} message={state.message} />
+
+          {/* Main 2-Column Processing Grid */}
+          <div className="processing-grid">
+            {/* Left Column: Stages & Activity Log */}
+            <div className="processing-left-col">
+              <PipelineStages stages={state.stages} currentStageId={state.currentStageId} />
+              <ProcessingActivityLog activities={state.activities} />
+            </div>
+
+            {/* Right Column: Real Quality Scan Preview & AI Insight */}
+            <div className="processing-right-col">
+              <QualityScanCard scan={state.qualityScan as any} />
+              <AiInsightCard insight={state.aiInsight} />
+
+              {/* Ready to view CTA if completed */}
+              {isCompleted && (
+                <div className="glass-card ready-cta-card">
+                  <div className="ready-cta-content">
+                    <CheckCircle2 size={24} className="ready-check-icon" />
+                    <div>
+                      <div className="ready-cta-title">Quality Verification Complete</div>
+                      <div className="ready-cta-sub">
+                        {isNavigating
+                          ? 'Opening Document Intelligence dashboard...'
+                          : 'Adaptive preprocessing applied. Staged for Phase 3 OCR.'}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => router.push(`/analysis/${encodeURIComponent(state.documentId)}`)}
+                    disabled={isNavigating}
+                  >
+                    <span>View Document Intelligence</span>
+                    <ArrowRight size={16} />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </main>
       </div>
     </div>

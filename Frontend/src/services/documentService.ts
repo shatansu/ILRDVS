@@ -1,57 +1,65 @@
 /**
- * Document Service Layer for BhoomiVerify AI
- *
- * This layer abstracts backend communication.
- * When the real backend (FastAPI / Node) is connected, only this file
- * needs to point to real API endpoints (e.g., POST /documents, GET /documents/:id/status).
- * The UI screens remain completely unchanged.
+ * Real Document Service Layer for BhoomiVerify AI.
+ * Connects Frontend directly to FastAPI Backend on http://127.0.0.1:8000
  */
 
 import type { DocumentMetadata, UploadResponse, ProcessingState, DocumentAnalysisResult } from '@/types';
-import { getInitialProcessingState } from './mockProcessingService';
-import { getMockAnalysisResult } from './mockAnalysisService';
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api';
 
 // Ephemeral client cache for session-based filename recovery across route transitions
 const documentMetaCache = new Map<string, { fileName: string; metadata?: DocumentMetadata }>();
 
 export const documentService = {
   /**
-   * Uploads documents to the backend.
-   * Future Real API:
-   *   const formData = new FormData();
-   *   files.forEach(f => formData.append('files', f));
-   *   const res = await fetch('/api/documents', { method: 'POST', body: formData });
-   *   return await res.json();
+   * Uploads real document (PDF or Image) to FastAPI backend.
+   * Backend runs DocumentQualityPipeline and saves record to DB.
    */
   async uploadDocuments(
     files: File[],
     metadata?: DocumentMetadata
   ): Promise<UploadResponse> {
-    // Simulated network latency
-    await new Promise((resolve) => setTimeout(resolve, 600));
-
     if (files.length === 0) {
       throw new Error('No files provided for upload');
     }
 
-    // In mock mode: Simulate the backend receiving document & creating record
-    const primaryFile = files[0];
-    const mockBackendGeneratedId = `DOC-${new Date().getFullYear()}-${Math.floor(
-      100000 + Math.random() * 900000
-    )}`;
-
-    // Store filename in session cache so Screen 2 can read original name if needed
-    documentMetaCache.set(mockBackendGeneratedId, {
-      fileName: primaryFile.name,
-      metadata,
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append('files', file);
     });
 
-    return {
-      documentId: mockBackendGeneratedId,
-      fileName: primaryFile.name,
-      status: 'processing',
-      message: 'Document successfully registered and queued for AI analysis',
-    };
+    if (metadata) {
+      if (metadata.state) formData.append('state', metadata.state);
+      if (metadata.district) formData.append('district', metadata.district);
+      if (metadata.tehsil) formData.append('tehsil', metadata.tehsil);
+      if (metadata.documentType) formData.append('documentType', metadata.documentType);
+      if (metadata.language) formData.append('language', metadata.language);
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/documents/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Upload failed with status: ${response.status}`);
+      }
+
+      const res: UploadResponse = await response.json();
+
+      // Cache metadata
+      documentMetaCache.set(res.documentId, {
+        fileName: res.fileName,
+        metadata,
+      });
+
+      return res;
+    } catch (err: any) {
+      console.error('[DocumentService] Upload failed:', err);
+      throw err;
+    }
   },
 
   /**
@@ -62,24 +70,34 @@ export const documentService = {
   },
 
   /**
-   * Retrieves document intelligence / analysis results.
-   * Future Real API:
-   *   const res = await fetch(`/api/documents/${documentId}/analysis`);
-   *   return await res.json();
+   * Retrieves real document intelligence / quality analysis results from Backend.
    */
   async getDocumentAnalysis(documentId: string): Promise<DocumentAnalysisResult> {
-    const cached = documentMetaCache.get(documentId);
-    return getMockAnalysisResult(documentId, cached?.fileName);
+    try {
+      const response = await fetch(`${API_BASE_URL}/documents/${encodeURIComponent(documentId)}/analysis`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch analysis: ${response.statusText}`);
+      }
+      return await response.json();
+    } catch (err: any) {
+      console.error('[DocumentService] getDocumentAnalysis error:', err);
+      throw err;
+    }
   },
 
   /**
-   * Future Real API:
-   *   const res = await fetch(`/api/documents/${documentId}/status`);
-   *   return await res.json();
+   * Retrieves real-time processing status and quality metrics from Backend.
    */
   async getProcessingStatus(documentId: string): Promise<ProcessingState> {
-    const cached = documentMetaCache.get(documentId);
-    return getInitialProcessingState(documentId, cached?.fileName);
+    try {
+      const response = await fetch(`${API_BASE_URL}/documents/${encodeURIComponent(documentId)}/status`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch status: ${response.statusText}`);
+      }
+      return await response.json();
+    } catch (err: any) {
+      console.error('[DocumentService] getProcessingStatus error:', err);
+      throw err;
+    }
   },
 };
-

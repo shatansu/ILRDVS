@@ -36,7 +36,7 @@ export default function DropZone({ onFilesSelected, currentFileCount }: DropZone
           valid.push({
             file,
             id: generateClientId(),
-            preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+            preview: URL.createObjectURL(file),
           });
         } else {
           errors.push(result.error || 'Invalid file');

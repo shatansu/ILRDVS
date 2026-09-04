@@ -1,13 +1,12 @@
 'use client';
 
 import React, { useState, useCallback } from 'react';
-import { Upload, RotateCcw, Fingerprint, Info, Sparkles } from 'lucide-react';
+import { Upload, RotateCcw, Sparkles } from 'lucide-react';
 import Sidebar from '@/components/layout/Sidebar';
 import Topbar from '@/components/layout/Topbar';
 import DropZone from '@/components/document/DropZone';
 import FileList from '@/components/document/FileList';
 import MetadataForm from '@/components/document/MetadataForm';
-import { generateDocumentId } from '@/lib/file-utils';
 import type { SelectedFile, DocumentMetadata } from '@/types';
 
 import '@/styles/layout.css';
@@ -17,30 +16,20 @@ export default function UploadPage() {
   const [files, setFiles] = useState<SelectedFile[]>([]);
   const [metadata, setMetadata] = useState<DocumentMetadata>({});
   const [metadataExpanded, setMetadataExpanded] = useState(false);
-  const [documentId, setDocumentId] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
   /** Add new files to selection */
   const handleFilesSelected = useCallback((newFiles: SelectedFile[]) => {
     setFiles((prev) => [...prev, ...newFiles]);
-    // Generate document ID on first file selection
-    if (!documentId) {
-      setDocumentId(generateDocumentId());
-    }
-  }, [documentId]);
+  }, []);
 
   /** Remove a file from selection */
   const handleRemoveFile = useCallback((id: string) => {
     setFiles((prev) => {
       const updated = prev.filter((f) => f.id !== id);
-      // Revoke object URL to prevent memory leaks
       const removed = prev.find((f) => f.id === id);
       if (removed?.preview) {
         URL.revokeObjectURL(removed.preview);
-      }
-      // Clear doc ID if no files left
-      if (updated.length === 0) {
-        setDocumentId(null);
       }
       return updated;
     });
@@ -53,28 +42,24 @@ export default function UploadPage() {
     });
     setFiles([]);
     setMetadata({});
-    setDocumentId(null);
     setMetadataExpanded(false);
   }, [files]);
 
-  /** Handle upload (will connect to backend API later) */
+  /** Handle upload & start analysis (will connect to backend API later) */
   const handleUpload = useCallback(async () => {
     if (files.length === 0) return;
 
     setIsUploading(true);
 
-    // TODO: Connect to backend API
-    // For now, simulate a brief delay
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // In the future, this will:
+    // TODO: Connect to backend API:
     // 1. POST files + metadata to /api/documents/upload
-    // 2. Receive document IDs and processing job IDs
-    // 3. Navigate to processing status page
+    // 2. Receive server-generated Document ID (e.g. DOC-2026-000184)
+    // 3. Transition to Document Analysis screen
+    await new Promise((resolve) => setTimeout(resolve, 1200));
 
     setIsUploading(false);
-    alert(`Upload initiated!\n\nDocument ID: ${documentId}\nFiles: ${files.length}\n\nThis will connect to the backend API in the next phase.`);
-  }, [files, documentId]);
+    alert(`Upload initiated for ${files.length} file(s)!\n\nNext step: Connecting to backend pipeline to register document and start AI analysis.`);
+  }, [files]);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -100,26 +85,15 @@ export default function UploadPage() {
             </p>
           </div>
 
-          {/* Drop Zone */}
+          {/* Drop Zone & Selection */}
           <div className="glass-card" style={{ padding: '2rem' }}>
             <DropZone
               onFilesSelected={handleFilesSelected}
               currentFileCount={files.length}
             />
 
-            {/* File List */}
+            {/* Selected Files with Preview & Remove actions */}
             <FileList files={files} onRemove={handleRemoveFile} />
-
-            {/* Document ID Banner */}
-            {documentId && (
-              <div className="doc-id-banner">
-                <Fingerprint size={18} style={{ color: 'var(--color-primary-light)', flexShrink: 0 }} />
-                <div>
-                  <div className="doc-id-label">Document ID</div>
-                  <div className="doc-id-value">{documentId}</div>
-                </div>
-              </div>
-            )}
 
             {/* Metadata Form */}
             <MetadataForm
@@ -145,7 +119,7 @@ export default function UploadPage() {
                 type="button"
                 className="btn btn-ghost"
                 onClick={handleReset}
-                disabled={files.length === 0}
+                disabled={files.length === 0 || isUploading}
               >
                 <RotateCcw size={16} />
                 Reset
@@ -161,12 +135,12 @@ export default function UploadPage() {
                     <span className="animate-spin-slow" style={{ display: 'inline-flex' }}>
                       <Upload size={16} />
                     </span>
-                    Processing...
+                    Analyzing...
                   </>
                 ) : (
                   <>
                     <Upload size={16} />
-                    Upload & Process
+                    Upload & Analyze
                   </>
                 )}
               </button>
@@ -177,3 +151,4 @@ export default function UploadPage() {
     </div>
   );
 }
+

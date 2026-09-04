@@ -328,24 +328,45 @@
   color: var(--color-text-muted);
 }
 
-.file-remove {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-md);
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
+.file-actions {
   display: flex;
   align-items: center;
-  justify-content: center;
-  transition: all var(--transition-fast);
+  gap: 0.5rem;
   flex-shrink: 0;
 }
 
-.file-remove:hover {
-  background: rgba(239, 68, 68, 0.1);
+.btn-file-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-md);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+}
+
+.btn-file-action:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  border-color: var(--color-border-light);
+}
+
+.btn-file-preview:hover {
+  border-color: var(--color-primary-light);
+  color: var(--color-primary-light);
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.btn-file-remove:hover {
+  border-color: rgba(239, 68, 68, 0.4);
   color: var(--color-danger);
+  background: rgba(239, 68, 68, 0.1);
 }
 
 /* Upload Button */
@@ -400,33 +421,6 @@
   border-color: var(--color-border-light);
 }
 
-/* Document ID Banner */
-.doc-id-banner {
-  margin-top: 1.5rem;
-  padding: 0.85rem 1.25rem;
-  background: rgba(37, 99, 235, 0.08);
-  border: 1px solid rgba(37, 99, 235, 0.2);
-  border-radius: var(--radius-lg);
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.doc-id-label {
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.doc-id-value {
-  font-size: 0.9rem;
-  font-weight: 700;
-  color: var(--color-primary-light);
-  font-family: var(--font-mono);
-}
-
 /* Info note */
 .upload-note {
   margin-top: 1rem;
@@ -445,4 +439,137 @@
   flex-shrink: 0;
   margin-top: 1px;
   color: var(--color-info);
+}
+
+/* ===========================
+   Preview Modal Styles
+   =========================== */
+.preview-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  animation: fadeIn 200ms ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.preview-modal-content {
+  width: 100%;
+  max-width: 900px;
+  height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+
+.preview-modal-header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.preview-modal-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.preview-type-icon {
+  flex-shrink: 0;
+}
+
+.preview-type-icon.pdf {
+  color: #ef4444;
+}
+
+.preview-type-icon.img {
+  color: #10b981;
+}
+
+.preview-modal-filename {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 450px;
+}
+
+.preview-modal-filesize {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.preview-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.preview-modal-close {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.preview-modal-close:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--color-danger);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.preview-modal-body {
+  flex: 1;
+  background: #0b1120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+}
+
+.preview-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  padding: 1rem;
+}
+
+.preview-unsupported {
+  text-align: center;
+  color: var(--color-text-secondary);
+  padding: 2rem;
 }

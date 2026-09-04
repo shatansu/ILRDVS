@@ -1,18 +1,21 @@
 'use client';
 
 import React, { useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { Upload, RotateCcw, Sparkles } from 'lucide-react';
 import Sidebar from '@/components/layout/Sidebar';
 import Topbar from '@/components/layout/Topbar';
 import DropZone from '@/components/document/DropZone';
 import FileList from '@/components/document/FileList';
 import MetadataForm from '@/components/document/MetadataForm';
+import { documentService } from '@/services/documentService';
 import type { SelectedFile, DocumentMetadata } from '@/types';
 
 import '@/styles/layout.css';
 import '@/styles/upload.css';
 
 export default function UploadPage() {
+  const router = useRouter();
   const [files, setFiles] = useState<SelectedFile[]>([]);
   const [metadata, setMetadata] = useState<DocumentMetadata>({});
   const [metadataExpanded, setMetadataExpanded] = useState(false);
@@ -45,21 +48,24 @@ export default function UploadPage() {
     setMetadataExpanded(false);
   }, [files]);
 
-  /** Handle upload & start analysis (will connect to backend API later) */
+  /** Handle upload & start analysis */
   const handleUpload = useCallback(async () => {
     if (files.length === 0) return;
 
     setIsUploading(true);
-
-    // TODO: Connect to backend API:
-    // 1. POST files + metadata to /api/documents/upload
-    // 2. Receive server-generated Document ID (e.g. DOC-2026-000184)
-    // 3. Transition to Document Analysis screen
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-
-    setIsUploading(false);
-    alert(`Upload initiated for ${files.length} file(s)!\n\nNext step: Connecting to backend pipeline to register document and start AI analysis.`);
-  }, [files]);
+    try {
+      // Calls document service layer (backend / mock adapter)
+      const res = await documentService.uploadDocuments(
+        files.map((f) => f.file),
+        metadata
+      );
+      // Navigate to /processing/:documentId with dynamic server ID
+      router.push(`/processing/${encodeURIComponent(res.documentId)}`);
+    } catch (err) {
+      console.error('Upload failed:', err);
+      setIsUploading(false);
+    }
+  }, [files, metadata, router]);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>

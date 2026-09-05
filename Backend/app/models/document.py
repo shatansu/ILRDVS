@@ -43,3 +43,24 @@ class QualityAssessmentModel(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     document = relationship("DocumentModel", back_populates="quality_assessment")
+
+
+class ExtractionResultModel(Base):
+    """Persisted Phase 3 result. Original files and raw OCR are never overwritten."""
+    __tablename__ = "extraction_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    document_id = Column(String(64), ForeignKey("documents.id"), nullable=False, index=True)
+    document_type = Column(String(32), nullable=False)
+    raw_ocr_text = Column(Text, nullable=True)
+    fields_json = Column(Text, nullable=False, default="[]")
+    table_structure_json = Column(Text, nullable=True)
+    avg_confidence = Column(Float, default=0.0)
+    fields_count = Column(Integer, default=0)
+    fields_needing_attention = Column(Integer, default=0)
+    ai_summary = Column(Text, nullable=True)
+    engine_name = Column(String(128), nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    document = relationship("DocumentModel")

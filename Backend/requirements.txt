@@ -10,7 +10,9 @@ pymupdf>=1.24.0
 sqlalchemy>=2.0.28
 pymysql>=1.1.0
 python-dotenv>=1.0.1
-paddlepaddle>=2.6.0
-paddleocr>=2.9.0
+# Phase 3 currently uses the documented 2.x PaddleOCR/PPStructure Python API.
+# Pin the major version so a future 3.x API change cannot silently break OCR.
+paddlepaddle>=2.6.0,<3.0
+paddleocr>=2.9.0,<3.0
 thefuzz>=0.22.0
 python-Levenshtein>=0.25.0

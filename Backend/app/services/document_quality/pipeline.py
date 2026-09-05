@@ -95,9 +95,6 @@ class DocumentQualityPipeline:
             damage_result = analyze_damage(gray)
             comp_result = analyze_composition(gray)
 
-            # Layout classification: simple_form / complex_table / handwritten_register
-            layout_result = classify_layout(gray, handwritten_pct=comp_result.get("handwritten_pct", 0))
-
             # Adaptive Enhancement
             enhanced_page_path = doc_proc_dir / f"page_{page_num:03d}_enhanced.png"
             enh_result = enhance_page(
@@ -109,6 +106,14 @@ class DocumentQualityPipeline:
                 detected_orientation_angle=orient_result["detected_angle"]
             )
             all_enhancements.extend(enh_result["operations_applied"])
+
+            # Route on the enhanced page so table line detection sees the same
+            # document representation passed to OCR/PP-Structure.
+            enhanced_gray = cv2.imread(str(enhanced_page_path), cv2.IMREAD_GRAYSCALE)
+            layout_result = classify_layout(
+                enhanced_gray if enhanced_gray is not None else gray,
+                handwritten_pct=comp_result.get("handwritten_pct", 0),
+            )
 
             page_metrics = {
                 "resolution": res_result,
@@ -129,12 +134,15 @@ class DocumentQualityPipeline:
                 "raw_image_path": str(page_path),
                 "enhanced_image_path": str(enhanced_page_path),
                 "metrics": page_metrics,
-                "evaluation": page_eval
+                "evaluation": page_eval,
+                "document_type": layout_result["document_type"],
             })
 
         # Calculate Aggregate Document Metrics (averaged across pages)
+        if not per_page_results:
+            return {"success": False, "error": "No readable pages could be analyzed", "status": "REJECTED"}
         primary_page = per_page_results[0]
-        avg_score = int(round(sum(p["evaluation"]["score"] for p in per_page_results) / total_pages))
+        avg_score = int(round(sum(p["evaluation"]["score"] for p in per_page_results) / len(per_page_results)))
         
         # If any page is rejected due to severe unreadable blur/damage
         any_rejected = any(p["evaluation"]["is_rejected"] for p in per_page_results)
@@ -174,14 +182,16 @@ class DocumentQualityPipeline:
             "qualityRating": eval_result["rating_label"]
         }
 
-        # Determine document type from primary page layout classification
+        # Majority routing decision for a multi-page document.
+        document_types = [page["document_type"] for page in per_page_results]
+        detected_doc_type = max(set(document_types), key=document_types.count)
         pri_layout = pri_metrics.get("layout", {})
-        detected_doc_type = pri_layout.get("document_type", "simple_form")
 
         understanding_ui_data = {
-            "language": "Hindi + English",
+            "language": "OCR language detection pending",
             "script": pri_metrics["composition"]["script_estimation"],
-            "documentType": "Land Revenue Record (Khasra / RoR)",
+            "documentType": detected_doc_type.replace("_", " ").title(),
+            "document_type": detected_doc_type,
             "recognitionMode": pri_metrics["composition"]["mode"],
             "pages": total_pages,
             "handwrittenRatio": f"{pri_metrics['composition']['handwritten_pct']}%",

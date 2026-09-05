@@ -1,6 +1,10 @@
 import os
 from pathlib import Path
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+# Load .env before any os.getenv() call
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 STORAGE_DIR = BASE_DIR / "storage"

@@ -55,6 +55,9 @@ export interface ProcessingState {
 export interface UploadResponse {
   documentId: string;
   fileName: string;
-  status: 'processing' | 'received';
+  status: 'completed' | 'failed' | 'rejected';
   message?: string;
+  is_rejected?: boolean;
+  qualityScore?: number;
+  fieldsExtracted?: number;
 }

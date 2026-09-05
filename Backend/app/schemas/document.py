@@ -13,6 +13,7 @@ class UploadResponse(BaseModel):
     message: Optional[str] = None
     is_rejected: bool = False
     qualityScore: Optional[int] = None
+    fieldsExtracted: int = 0
 
 class QualityMetric(BaseModel):
     label: str

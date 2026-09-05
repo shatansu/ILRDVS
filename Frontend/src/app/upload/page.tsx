@@ -54,7 +54,7 @@ export default function UploadPage() {
 
     setIsUploading(true);
     try {
-      // Calls document service layer (backend / mock adapter)
+      // Calls real FastAPI backend via document service layer
       const res = await documentService.uploadDocuments(
         files.map((f) => f.file),
         metadata

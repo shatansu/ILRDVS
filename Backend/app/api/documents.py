@@ -15,15 +15,17 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..core.database import get_db, Base, engine
-from ..models.document import DocumentModel, QualityAssessmentModel
+from ..models.document import DocumentModel, QualityAssessmentModel, ExtractionResultModel
 from ..schemas.document import UploadResponse, ProcessingState, DocumentAnalysisResult
 from ..services.document_quality.pipeline import DocumentQualityPipeline
+from ..services.extraction_pipeline import ExtractionPipeline
 
 # Initialize DB tables
 Base.metadata.create_all(bind=engine)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 pipeline = DocumentQualityPipeline(settings.STORAGE_DIR)
+extraction_pipeline = ExtractionPipeline(settings.STORAGE_DIR)
 
 def map_quality_status_badge(status_str: str) -> str:
     s = status_str.lower()
@@ -107,13 +109,50 @@ async def upload_document(
     db.add(quality_record)
     db.commit()
 
+    fields_extracted = 0
+    extraction_message = "Document quality verified and adaptive enhancements applied"
+    if not is_rejected:
+        doc_record.status = "EXTRACTING"
+        db.commit()
+        try:
+            extraction = extraction_pipeline.extract(doc_id, pipeline_res.get("understanding", {}))
+            db.add(ExtractionResultModel(
+                document_id=doc_id,
+                document_type=extraction.document_type,
+                raw_ocr_text=extraction.raw_ocr_text,
+                fields_json=json.dumps(extraction.fields, ensure_ascii=False),
+                table_structure_json=json.dumps(extraction.table_structure, ensure_ascii=False),
+                avg_confidence=extraction.avg_confidence,
+                fields_count=len(extraction.fields),
+                fields_needing_attention=extraction.fields_needing_attention,
+                ai_summary=extraction.ai_summary,
+                engine_name=extraction.engine_name,
+            ))
+            doc_record.status = "EXTRACTED"
+            fields_extracted = len(extraction.fields)
+            extraction_message = extraction.ai_summary
+        except Exception as exc:
+            # Quality output remains available. Do not create invented fields when
+            # OCR dependencies/models are unavailable or a recognizer fails.
+            doc_record.status = "EXTRACTION_FAILED"
+            extraction_message = f"Quality processing completed, but OCR extraction failed: {exc}"
+            db.add(ExtractionResultModel(
+                document_id=doc_id,
+                document_type=pipeline_res.get("understanding", {}).get("document_type", "simple_form"),
+                fields_json="[]",
+                error_message=str(exc),
+                ai_summary=extraction_message,
+            ))
+        db.commit()
+
     return UploadResponse(
         documentId=doc_id,
         fileName=filename,
-        status="completed" if not is_rejected else "rejected",
-        message="Document quality verified and adaptive enhancements applied" if not is_rejected else pipeline_res.get("rejection_reason"),
+        status="completed" if doc_record.status == "EXTRACTED" else "failed" if doc_record.status == "EXTRACTION_FAILED" else "rejected",
+        message=extraction_message if not is_rejected else pipeline_res.get("rejection_reason"),
         is_rejected=is_rejected,
-        qualityScore=pipeline_res.get("composite_score", 0)
+        qualityScore=pipeline_res.get("composite_score", 0),
+        fieldsExtracted=fields_extracted,
     )
 
 @router.get("/{documentId}/status", response_model=ProcessingState)
@@ -123,6 +162,7 @@ async def get_processing_status(documentId: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Document not found")
 
     assessment = db.query(QualityAssessmentModel).filter(QualityAssessmentModel.document_id == documentId).first()
+    extraction = db.query(ExtractionResultModel).filter(ExtractionResultModel.document_id == documentId).order_by(ExtractionResultModel.id.desc()).first()
     q_data = json.loads(assessment.quality_metrics_json) if assessment and assessment.quality_metrics_json else {}
 
     # Format quality scan cards
@@ -167,16 +207,18 @@ async def get_processing_status(documentId: str, db: Session = Depends(get_db)):
         "statusText": assessment.rating_label if assessment else "Pending"
     }
 
+    extraction_complete = doc.status == "EXTRACTED" and extraction is not None and not extraction.error_message
+    extraction_failed = doc.status == "EXTRACTION_FAILED"
     stages = [
         {"id": 1, "name": "Document Received", "description": "File integrity and magic bytes verified", "status": "completed"},
         {"id": 2, "name": "File Integrity Check", "description": "SHA-256 fingerprint registered", "status": "completed"},
         {"id": 3, "name": "Document Quality Analysis", "description": "Resolution, blur, skew, damage computed via OpenCV", "status": "completed"},
         {"id": 4, "name": "Image Enhancement", "description": "Adaptive CLAHE and auto-deskewing applied", "status": "completed"},
-        {"id": 5, "name": "Language & Layout Detection", "description": "Devanagari script and printed/handwriting composition", "status": "completed"},
-        {"id": 6, "name": "OCR / Handwriting Recognition", "description": "Queued for Phase 3 OCR/HTR Layer", "status": "waiting"},
-        {"id": 7, "name": "Land Field Extraction", "description": "Queued for Phase 3 Extraction Layer", "status": "waiting"},
-        {"id": 8, "name": "Confidence Analysis", "description": "Pending Phase 3", "status": "waiting"},
-        {"id": 9, "name": "Preparing Analysis Result", "description": "Quality assessment finalized", "status": "completed"}
+        {"id": 5, "name": "Language & Layout Detection", "description": "Visual layout classified for the recognition router", "status": "completed"},
+        {"id": 6, "name": "OCR / Handwriting Recognition", "description": "PaddleOCR Hindi-first recognition with English fallback", "status": "completed" if extraction_complete else "waiting"},
+        {"id": 7, "name": "Land Field Extraction", "description": "Land field taxonomy matched against recognized text/table cells", "status": "completed" if extraction_complete else "waiting"},
+        {"id": 8, "name": "Confidence Analysis", "description": "OCR, match, and field-context confidence calculated", "status": "completed" if extraction_complete else "waiting"},
+        {"id": 9, "name": "Preparing Analysis Result", "description": "Evidence-linked extraction result stored", "status": "completed" if extraction_complete else "waiting"}
     ]
 
     now_time = datetime.now().strftime("%I:%M:%S %p")
@@ -184,21 +226,28 @@ async def get_processing_status(documentId: str, db: Session = Depends(get_db)):
         {"id": "act-1", "time": now_time, "message": "Document registered and SHA-256 signature verified", "stageId": 1},
         {"id": "act-2", "time": now_time, "message": f"OpenCV Quality audit complete: Score {assessment.score if assessment else 0}/100 ({assessment.rating_label if assessment else 'N/A'})", "stageId": 3},
         {"id": "act-3", "time": now_time, "message": "Adaptive preprocessing completed and clean sheet stored in storage/processed/", "stageId": 4},
-        {"id": "act-4", "time": now_time, "message": "Ready for Phase 3 Recognition Engine", "stageId": 5}
+        {"id": "act-4", "time": now_time, "message": "Layout classified and routed to the Phase 3 recognition engine", "stageId": 5}
     ]
+    if extraction_complete:
+        activities.extend([
+            {"id": "act-5", "time": now_time, "message": "PaddleOCR recognition completed", "stageId": 6},
+            {"id": "act-6", "time": now_time, "message": f"{extraction.fields_count} land-record fields extracted with confidence scores", "stageId": 8},
+        ])
+    if extraction_failed:
+        activities.append({"id": "act-5", "time": now_time, "message": extraction.error_message or "OCR extraction failed", "stageId": 6})
 
     return ProcessingState(
         documentId=documentId,
         fileName=doc.filename,
-        status="completed" if not (assessment and assessment.is_rejected) else "error",
-        currentStageId=5,
-        progress=100 if not (assessment and assessment.is_rejected) else 40,
-        message="Document quality analyzed and enhanced" if not (assessment and assessment.is_rejected) else assessment.rejection_reason,
+        status="completed" if extraction_complete else "error" if extraction_failed or (assessment and assessment.is_rejected) else "processing",
+        currentStageId=9 if extraction_complete else 5,
+        progress=100 if extraction_complete else 45 if extraction_failed else 40 if assessment and assessment.is_rejected else 55,
+        message=extraction.ai_summary if extraction_complete else extraction.error_message if extraction_failed and extraction else "Document quality analyzed and enhanced" if not (assessment and assessment.is_rejected) else assessment.rejection_reason,
         stages=stages,
         qualityScan=quality_scan,
         aiInsight=assessment.ai_insight if assessment else "Analyzing document quality...",
         activities=activities,
-        error=assessment.rejection_reason if assessment and assessment.is_rejected else None
+        error=extraction.error_message if extraction_failed and extraction else assessment.rejection_reason if assessment and assessment.is_rejected else None
     )
 
 @router.get("/{documentId}/analysis", response_model=DocumentAnalysisResult)
@@ -208,6 +257,7 @@ async def get_document_analysis(documentId: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Document not found")
 
     assessment = db.query(QualityAssessmentModel).filter(QualityAssessmentModel.document_id == documentId).first()
+    extraction = db.query(ExtractionResultModel).filter(ExtractionResultModel.document_id == documentId).order_by(ExtractionResultModel.id.desc()).first()
     q_data = json.loads(assessment.quality_metrics_json) if assessment and assessment.quality_metrics_json else {}
     u_data = json.loads(assessment.understanding_json) if assessment and assessment.understanding_json else {}
 
@@ -250,44 +300,40 @@ async def get_document_analysis(documentId: str, db: Session = Depends(get_db)):
         "note": assessment.ai_insight if assessment else "Document quality evaluated"
     }
 
+    extracted_fields = json.loads(extraction.fields_json) if extraction and extraction.fields_json else []
     understanding_obj = {
         "language": u_data.get("language", "Hindi + English"),
         "script": u_data.get("script", "Devanagari + Latin"),
-        "documentType": u_data.get("documentType", "Land Revenue Record"),
+        "documentType": extraction.document_type.replace("_", " ").title() if extraction else u_data.get("documentType", "Unknown"),
         "recognitionMode": u_data.get("recognitionMode", "Mixed — Printed + Handwritten"),
         "pages": doc.pages_count,
         "layout": u_data.get("layout", "Standard Land Record Sheet"),
         "confidence": float(assessment.score if assessment else 0)
     }
 
-    # As instructed by user: NO FAKE MOCK EXTRACTION DATA.
-    # Extraction layer is next phase (Phase 3).
-    # Provide empty fields array or clean pending state.
-    extracted_fields = []
-
     metrics_obj = {
         "qualityScore": assessment.score if assessment else 0,
         "qualityStatus": assessment.rating_label if assessment else "Fair",
-        "extractionConfidence": 0,
-        "confidenceStatus": "Pending Phase 3 OCR",
-        "fieldsExtracted": 0,
-        "totalFields": 0,
-        "fieldsStatus": "Queued for OCR",
-        "fieldsNeedingAttention": 0,
-        "attentionStatus": "Quality Verified"
+        "extractionConfidence": extraction.avg_confidence if extraction and not extraction.error_message else 0,
+        "confidenceStatus": "Measured from OCR, field matching, and value context" if extraction and not extraction.error_message else "Extraction failed" if extraction and extraction.error_message else "Pending OCR",
+        "fieldsExtracted": len(extracted_fields),
+        "totalFields": len(extracted_fields),
+        "fieldsStatus": "Real OCR extraction complete" if extraction and not extraction.error_message else "No fields extracted",
+        "fieldsNeedingAttention": extraction.fields_needing_attention if extraction else 0,
+        "attentionStatus": "Human review recommended" if extraction and extraction.fields_needing_attention else "No low-confidence fields"
     }
 
     low_conf_warning = {
-        "count": 0,
-        "message": "Quality analysis complete. Extraction layer scheduled for Phase 3.",
-        "fields": []
+        "count": sum(1 for field in extracted_fields if field.get("needsAttention")),
+        "message": "These values need review because their OCR, label match, or value-format confidence is below the configured threshold.",
+        "fields": [{"name": field.get("name", "Unknown"), "confidence": field.get("confidence", 0)} for field in extracted_fields if field.get("needsAttention")]
     }
 
     provenance_obj = {
         "documentId": doc.id,
-        "source": "BhoomiVerify Ingestion & Quality Engine v1.0",
+        "source": "BhoomiVerify quality and recognition pipeline",
         "pagesAnalyzed": doc.pages_count,
-        "extractionEngine": "OpenCV 4.9.0 + CLAHE Contrast Enhancer",
+        "extractionEngine": extraction.engine_name if extraction and extraction.engine_name else "Not run",
         "processingState": doc.status,
         "timestamp": now_str
     }
@@ -295,7 +341,7 @@ async def get_document_analysis(documentId: str, db: Session = Depends(get_db)):
     return DocumentAnalysisResult(
         documentId=doc.id,
         fileName=doc.filename,
-        status="completed" if not (assessment and assessment.is_rejected) else "failed",
+        status="completed" if extraction and not extraction.error_message else "failed" if assessment and assessment.is_rejected or extraction and extraction.error_message else "processing",
         pages=doc.pages_count,
         processingMode="Automatic",
         timestamp=now_str,
@@ -303,7 +349,7 @@ async def get_document_analysis(documentId: str, db: Session = Depends(get_db)):
         understanding=understanding_obj,
         metrics=metrics_obj,
         fields=extracted_fields,
-        aiSummary=assessment.ai_insight if assessment else "Quality assessment complete.",
+        aiSummary=extraction.ai_summary if extraction and extraction.ai_summary else assessment.ai_insight if assessment else "Quality assessment complete.",
         lowConfidenceWarning=low_conf_warning,
         provenance=provenance_obj,
         is_rejected=assessment.is_rejected if assessment else False,
